@@ -1,0 +1,149 @@
+import pandas as pd
+import numpy as np
+
+
+# Our ohlcv_df will contain the closing price as "Close"
+
+def get_future_diff(ohlcv_df):
+
+    #CAUTION THIS DIFFERENCE GIVES THE FUTURE DIFFERENCE NOT THE PAST CHANGE
+
+    # Create variable for the closing price
+    close = ohlcv_df["Close"]
+    # Skip the last value, because we can't get the future value of the last value
+    close = close[:-1]
+    # Create future_Close, this is done by shifting the values one place back (also here we skip the last value, which is NaN)
+    future_Close = ohlcv_df["Close"].copy().shift(-1).iloc[:-1]  
+
+    # Now we create the (future) "Diff" this is done by (new-old)/old
+    diff = future_Close.subtract(self.Close) / self.Close
+    
+    return diff
+   
+def optimal_route(D,f,short = True):
+
+	"""
+	Here we use a linear program to optimize the times to go long and short (and out), taking into account the commision ("f" in the program)
+
+	Arguments:
+	D --- [pd.Series] Pandas Series of all the Differences in prices compared to the next price
+	f --- [double] number representing the amount of commision per transaction 
+
+	Return:
+	optimal_strategy --- [list] List of the optimal strategy, cotaining -1 for going short at time t, 0 for closing and 1 for going long
+	"""
+
+	length = len(D)
+
+	L_name = ["L_"+ str(x) for x in range(length)]
+	S_name = ["S_" + str(x) for x in range(length)]
+	C_name = ["C_" + str(x) for x in range(length)]
+
+	A1_name = ["A1_" + str(x) for x in range(length)]
+	A2_name = ["A2_" + str(x) for x in range(length)]
+	B1_name = ["B1_" + str(x) for x in range(length)]
+	B2_name = ["B2_" + str(x) for x in range(length)]
+	g_name = ["g_" + str(x) for x in range(length)]
+
+	L = [pp.LpVariable(L_name[t], cat='Binary') for t in range(length)]
+	S = [pp.LpVariable(S_name[t], cat='Binary') for t in range(length)]
+	C = [pp.LpVariable(C_name[t], 0,2, cat = 'Integer') for t in range(length)]
+
+	A1 = [pp.LpVariable(A1_name[t], cat = 'Binary') for t in range(length)]
+	A2 = [pp.LpVariable(A2_name[t], cat = 'Binary') for t in range(length)]
+	B1 = [pp.LpVariable(B1_name[t], cat = 'Binary') for t in range(length)]
+	B2 = [pp.LpVariable(B2_name[t], cat = 'Binary') for t in range(length)]
+	g = [pp.LpVariable(g_name[t], cat = 'Binary') for t in range(length)]
+
+	M = 5
+
+	# Here we create the possibility for going short
+	D_short = np.zeros(length)
+
+	if short == True:
+		D_short = D
+
+	ordered_pairs_3d_array = [list(zip(S,-D_short)),list(zip(L,D)),list(zip(C,[-f for i in range(length)]))]
+	ordered_pairs = [i for sub in ordered_pairs_3d_array for i in sub]
+
+	e = pp.LpAffineExpression(ordered_pairs)
+
+	prob = pp.LpProblem(name='optimal_strategy', sense=pp.LpMaximize)
+
+	prob += e
+
+	prob += L[0] + S[0] <= 1
+	prob += C[0] == 1
+
+	for t in range(1,length):
+	    prob += L[t] + S[t] <= 1
+	    prob += A1[t] - A2[t] - L[t-1] + L[t] == 0
+	    prob += B1[t] - B2[t] - S[t-1] + S[t] == 0
+	    prob += A1[t] + A2[t] + B1[t] + B2[t] + M - M*g[t] >= 1
+	    prob += A1[t] + A2[t] + B1[t] + B2[t] - M*g[t] <= .9
+	    prob += A1[t] + A2[t] + B1[t] + B2[t] - M + M*g[t] - C[t] <= 0
+	    prob += A1[t] + A2[t] + B1[t] + B2[t] + M - M*g[t] - C[t] >= 0
+	    prob += -M*g[t] - C[t] <= 0
+	    prob += M*g[t] - C[t] >= 0
+
+	prob.solve()
+	pp.LpStatus[prob.status]
+
+	optimal_strategy = []
+
+	#print("profit indicator: ", pp.value(prob.objective))
+	#print("costs indicator: ", sum([i.varValue for i in C]))
+
+	for t in range(length):
+	    
+	    state = ""    
+	    if L[t].varValue == 1.0:
+	        state = "Long"
+	        optimal_strategy.append((1))
+	    elif S[t].varValue == 1.0:
+	        state = "Short"
+	        optimal_strategy.append((-1))
+	    else:
+	        state = "Out"
+	        optimal_strategy.append((0))
+	  
+	return optimal_strategy
+  
+def visualize_strategy(strategy, close):
+  
+  
+if __name__ == "__main__":
+
+    crypto_from = "BTC"
+    crypto_to = "USDT"
+    exchange_id = "binance"
+
+    # from variable id
+    exchange_class = getattr(ccxt, exchange_id)
+    exchange = exchange_class({
+        'timeout': 30000,
+        'enableRateLimit': True,
+    })
+    
+    symbol = crypto_from+"/"+crypto_to
+    timeframe = "1h"
+    
+    # Fetch the ohlcv data (Open High Low Close Volume) from BTC over USDT
+    df = exchange.fetch_ohlcv(symbol,timeframe=timeframe)
+    
+    # For this optimization technique we need to fetch the future diff at every data-point
+    future_diff = get_future_diff(df)
+    
+    fee = 0.005
+    short_possible = True
+    
+    # Now we will create a list with the optimal strategy
+    optimal_strategy = optimal_route(future_diff, fee, short_possible)
+    
+    # and we will add the optimal strategy to the df
+    df["Optimal_Strategy"] = optimal_strategy
+    
+    # To visualize the strategy and see the end result:
+    
+    
+    
